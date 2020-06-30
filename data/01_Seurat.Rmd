@@ -1,0 +1,130 @@
+---
+title: "Create Seurat Object"
+author: "Javier Perales-Patón - javier.perales@bioquant.uni-heidelberg.de - ORCID:0000-0003-0780-6683"
+output: github_document
+params:
+  ID: 
+    value: x
+  OUTDIR:
+    value: x
+---
+
+```{r, include=FALSE}
+# params <- list(ID="GSM4191961", OUTDIR="./01_Seurat")
+```
+
+## Setting-up environment
+The environment will be set with a random seed number for reproducibility and 
+an output folder for processed data and figures.
+
+### set env
+```{r env}
+options(stringsAsFactors = FALSE)
+# Seed number
+set.seed(1234)
+# Output directory
+OUTDIR <- params$OUTDIR
+if(!dir.exists(OUTDIR)) dir.create(OUTDIR);
+
+# Figures
+FIGDIR <- paste0(OUTDIR, "/figures/")
+knitr::opts_chunk$set(fig.path=FIGDIR)
+knitr::opts_chunk$set(dev=c('png'))
+# Data
+DATADIR <- paste0(OUTDIR, "/data/")
+if(!dir.exists(DATADIR)) dir.create(DATADIR);
+```
+
+### Load libraries
+Essential libraries for R analysis.
+```{r}
+library("dplyr")
+library("Seurat")
+library("ggplot2")
+library("yaml")
+```
+
+## Load data
+Individual samples are stored in individual folders in the `./00_scRNAseq`.
+
+
+```{r read_idx}
+# Find index file
+yaml_fl <- paste0("../index/samples/",params$ID,".yaml")
+idx <- yaml::read_yaml(yaml_fl)
+# Reformat for easy access to info
+idx$seurat_cutoff <- unlist(lapply(idx$seurat_cutoff, function(z) setNames(z[[1]], names(z))))
+idx$metadata <- unlist(lapply(idx$metadata, function(z) setNames(z[[1]], names(z))))
+```
+
+```{r}
+cat(paste0("Processing ",params$ID, "\n"), file=stdout())
+# Find folder of 10x cellranger count
+input_dir <- paste0("./00_scRNAseq/",params$ID)
+names(input_dir) <- params$ID
+
+dat <- Read10X(data.dir=input_dir)
+S <- CreateSeuratObject(counts = dat, project = params$ID, 
+			min.cells=5, 
+			min.features=idx$seurat_cutoff["MIN_nFeatures"])
+S[["percent.mt"]] <- PercentageFeatureSet(S, pattern = "^MT-")
+```
+
+## QC
+```{r QC, fig.width=14, fig.height=6}
+# Visualize QC metrics as a violin plot
+VlnPlot(S, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+# Feature scatter
+plot1 <- FeatureScatter(S, feature1 = "nCount_RNA", feature2 = "percent.mt") + 
+		geom_hline(yintercept=c(0, idx$seurat_cutoff["MAX_percMT"]))
+plot2 <- FeatureScatter(S, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
+		geom_hline(yintercept=c(idx$seurat_cutoff["MIN_nFeatures"], 
+					idx$seurat_cutoff["MAX_nFeatures"]))
+print(plot1 + plot2)
+```
+
+## Filter-out
+```{r}
+# Before
+before_nCells <- ncol(S)
+# apply Filter
+S <- subset(S, subset= nFeature_RNA > idx$seurat_cutoff["MIN_nFeatures"] & 
+	    		nFeature_RNA < idx$seurat_cutoff["MAX_nFeatures"] &
+	    percent.mt < idx$seurat_cutoff["MAX_percMT"])
+# After
+after_nCells <- ncol(S)
+
+print(c(before_nCells, after_nCells))
+```
+
+## Normalization using scTransform
+```{r}
+#NOTE: this single command replaces NormalizeData, ScaleData, and FindVariableFeatures.
+# Transformed data will be available in the SCT assay, which is set as the default after running sctransform
+# During normalization, we can also remove confounding sources of variation, for example, 
+# mitochondrial mapping percentage
+S <- SCTransform(S, vars.to.regress = "percent.mt", verbose = FALSE)
+```
+
+## Add metadata
+```{r}
+for(feat in names(idx$metadata)) {
+	    S[[feat]] <- idx$metadata[[feat]]
+}
+```
+
+## Save object
+```{r}
+saveRDS(S, paste0(DATADIR,"/S.rds"))
+```
+
+## sessionInfo
+```{r}
+sessionInfo()
+{                                                                                                                                                                                                           
+sink(file=paste0(OUTDIR,"/sessionInfo.txt"))
+print(sessionInfo())
+sink()
+}
+```

@@ -12,7 +12,11 @@ clean:
 seurat: $(SEURAT)
 
 %_Seurat: 01_Seurat.Rmd  01_Seurat
-	${CONDA_PREFIX}/bin/R -e "rmarkdown::render('$<', output_dir='$(filter-out $<,$^)', output_file='01_Seurat/$@.md', params=list(ID='$(@:%_01_Seurat=%)',OUTDIR='$(filter-out $<,$^)'))"
+#	${CONDA_PREFIX}/bin/R -e "rmarkdown::render('$<', output_dir='$(filter-out $<,$^)', output_file='01_Seurat/$@.md', params=list(ID='$(@:%_Seurat=%)',OUTDIR='$(filter-out $<,$^)'))"
+	${CONDA_PREFIX}/bin/R -e "rmarkdown::render('$<', output_file='$@.md', params=list(ID='$(@:%_Seurat=%)',OUTDIR='$@'))"
+	mv $@ $(filter-out $<,$^)
+	mv $@.md $(filter-out $<,$^)
+	mv $@.html $(filter-out $<,$^)
 
 01_Seurat:
 	mkdir $@
