@@ -1,0 +1,154 @@
+---
+title: "Get metadata for Menon 2020 dataset"
+author: "Javier Perales-Patón - javier.perales@bioquant.uni-heidelberg.de"
+output : github_document
+---
+
+Two objectives are addressed here:   
+
+* Getting clinical metadata for each sample. For both technologies, bulk rnaseq and single-cell rnaseq.
+* Reverse Engineer what are the library chemistry of single-cell samples. The original manuscript described two
+  (v2 and v3). However original authors do not provide this information in the metadata. We could get which samples
+  are which libraries because they used different thresholds in the cutoff for mitochondrial genes. (see later).
+
+## Load libraries
+```{r}
+library(GEOquery)
+library(Biobase)
+```
+
+## Get metadata from GEO
+For convenience, we use GEOquery to parse the `Series Matrix` file from the GEO accession number.
+```{r}
+eset_list <- GEOquery::getGEO("GSE140989")
+length(eset_list)
+```
+
+There are two expression-sets. Actually one for bulk and another for single-cell data. This is due to the fact 
+that each bunch of samples were profiled in different instruments (2000 vs 4000, Illumina HiSeq).
+```{r}
+lapply(eset_list, ncol)
+lapply(eset_list, function(eset) pData(eset)$title)
+```
+
+So actually we could split it
+```{r}
+bulk_mdat <- pData(eset_list[["GSE140989-GPL11154_series_matrix.txt.gz"]])
+sc_mdat <- pData(eset_list[["GSE140989-GPL20301_series_matrix.txt.gz"]])
+```
+
+## singleCell data
+### Load normalized data
+We are going to use the normalized data to find library chemistry. As it is described in the paper method section 
+(see below), different cutoff of mitochondrial gene expression was used depending on library. So we expect to see
+a clear signal.
+
+```{r sc_method}
+sc_mdat$data_processing[1]
+```
+
+```{r normdat}
+gz_con <- gzfile("data/GSE140989_PREMIERE_CombinedDataMatrixFile_Normalized.txt.gz", 'rt')
+normDat <- read.table(gz_con, sep="\t", header=TRUE, stringsAsFactors = FALSE, check.names = FALSE)
+close(gz_con) 
+
+# Check how it looks the Cell Ids, which actually contain the sample of origin
+head(colnames(normDat))
+# Get the sample of origin
+cellOrigin <- sapply(colnames(normDat), function(x) strsplit(x, split="_")[[1]][1])
+
+sampleIDs_suppl <- unique(sort(cellOrigin))
+```
+
+If we extract the sample IDs reported inthe metadata by the author, there is almost perfect match.
+We just have to tweeck a little bit one sample and they match perfectly: just to remove a prefix, and
+by alphanumerical order they match.
+```{r}
+sc_mdat$sampleID <- gsub("^PREMIERE-","", gsub(" \\[scRNA-seq\\]", "",sc_mdat$title))
+
+sidx <- order(gsub("KPMP_Pilot_18342","18-342", sc_mdat$sampleID))
+sID_dic <- data.frame(sampleID=sc_mdat$sampleID[sidx], sampleID_suppl=sampleIDs_suppl )
+print(sID_dic)
+```
+
+This does not make sense at all. It looks the percentage of mitochondrial genes is much lower than the 
+expected one for the data processing (expected 20 or 50%  vs. observed 0-10%)
+```{r}
+# Get mitochondrial genes
+mito <- grep("^MT-", rownames(normDat), value=TRUE)
+print(mito)
+# Calculate the total expression of mitochondrial genes per cell
+nMito <- colSums(normDat[mito,])/colSums(normDat) * 100
+
+# Regroup by sample
+sMito_bySample <- split(nMito, cellOrigin)
+
+# Visualize approach
+boxplot(sMito_bySample)
+unlist(lapply(sMito_bySample, median))
+```
+
+Actually supplementary Table 2 provides really a link of biopsy type to sample ID.
+Source: https://insight.jci.org/articles/view/133267/sd/1, suppl tab 2.
+```{r biopsy_type}
+# Curated by hand... suppl tab 2
+biopsy_dic <- data.frame(sampleID=c("SamplePRE027-1", "SamplePRE038-1", "SampleTransPRE19025",
+		      "Trans-SV-004", "Trans-SV-005", "Trans-SV-006", "Trans-SV-007", "Trans-SV-008",
+		      "17-1606-2-0", "17-1606-2-1", "18-139", "18-162", "KPMP_Pilot_18342", 
+		      "18142-5-1", "18142-5-2", "2017-06-28-TN-1", "2017-06-28-TN-2",
+		      "Hkid-PH-2017-08-25", "Hkid-YY-2017-08-25", "TN109-18-242-Lib", 
+		      "TN116-17-116-Lib-4a", "TN117-17-116-Lib-4b",
+		      "TN120-18-696-4", "TN121-18-696-10"),
+	   		biopsy=c(rep("preperfusion", 3), rep("surveillance", 5), rep("tumornephrectomy", 16))
+	   )
+stopifnot(all(biopsy_dic$sampleID %in% sID_dic$sampleID))
+sID_dic <- merge(sID_dic, biopsy_dic, by.x="sampleID", by.y="sampleID", all.x=TRUE, all.y=FALSE)
+```
+
+We try again to figure out the impact of biopsy type on the mitochondrial expression
+```{r}
+sID_suppl2biopsy <- setNames(sID_dic$biopsy,sID_dic$sampleID_suppl) 
+cols <- as.integer(factor(sID_suppl2biopsy[names(sMito_bySample)]))+1
+
+boxplot(sMito_bySample, col=cols)
+```
+
+> Wow! actually there is a signal there regarding type of biopsy and mitochondrial expression.
+
+Fortunately we have now a link of type of sample to type of biopsy that represents. So we could arrange tables and
+save everything.
+The most important thing is that:     
+
+* Extraction protocol: "10X Single Cell 3' GEX – version 2 chemistry for all tumor-nephrectomy samples and the 
+  enhanced 10X Single Cell 3' GEX – version3 for the more recently processed transplant surveillance biopsies and 
+  pre-perfusion biopsies. 
+* mitochondrial cutoff: tumor-nephrectomy data generated by 10Xgenomics version2, a threshold of < 20% mitochondrial 
+  reads per cell was used, whereas, a cutoff of < 50% mitochondrial reads per cell was applied for the data from 10X 
+  genomics version 3
+
+```{r}
+sc_mdat2 <- merge(sc_mdat, sID_dic, by.x="sampleID", by.y="sampleID", all.x=TRUE, all.y=FALSE)
+sc_mdat2$chemistry10X <- ifelse(sc_mdat2$biopsy=="tumornephrectomy", "v2","v3")
+sc_mdat2$processing.mtcutoff <- ifelse(sc_mdat2$biopsy=="tumornephrectomy", 20, 50)
+sc_mdat2$processing.nFeature.min <- 500
+sc_mdat2$processing.nFeature.max <- 5000
+
+write.table(sc_mdat2, file="./data/scRNAseq_metadata.tsv", sep="\t", 
+	    quote = FALSE, row.names = FALSE, col.names=TRUE)
+```
+
+## RNAseq data
+
+```{r}
+# We remove data_processing since this information is more related to the other dataset (main dataset of the study)
+# tha is the singlecell data (cell ranger, cutoffs for cell viability, etc).
+write.table(bulk_mdat[,colnames(bulk_mdat)!="data_processing"], 
+	    file="./data/RNAseq_metadata.tsv", sep="\t", 
+	    quote = FALSE, row.names = FALSE, col.names=TRUE)
+```
+
+## Session
+```{r}
+sessionInfo()
+```
+

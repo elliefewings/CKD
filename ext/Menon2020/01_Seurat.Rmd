@@ -1,0 +1,143 @@
+---
+title: "Create Seurat Object for Menon et al 2020 dataset"
+author: "Javier Perales-Patón - javier.perales@bioquant.uni-heidelberg.de - ORCID:0000-0003-0780-6683"
+output: github_document
+---
+
+## Setting-up environment
+The environment will be set with a random seed number for reproducibility and 
+an output folder for processed data and figures.
+
+### set env
+```{r env}
+options(stringsAsFactors = FALSE)
+# Seed number
+set.seed(1234)
+# Output directory
+OUTDIR <- "./01_Seurat/"
+if(!dir.exists(OUTDIR)) dir.create(OUTDIR);
+
+# Figures
+FIGDIR <- paste0(OUTDIR, "/figures/")
+knitr::opts_chunk$set(fig.path=FIGDIR)
+knitr::opts_chunk$set(dev=c('png','tiff'))
+# Data
+DATADIR <- paste0(OUTDIR, "/data/")
+if(!dir.exists(DATADIR)) dir.create(DATADIR);
+```
+
+### Load libraries
+Essential libraries for R analysis.
+```{r}
+library("dplyr")
+library("Seurat")
+library("ggplot2")
+```
+
+## Load data
+Individual samples are stored in individual folders in the `./raw/scRNAseq`.
+
+We first load the metadata of all samples.
+```{r meta}
+meta <- read.table("./data/scRNAseq_metadata.tsv", sep="\t", header=TRUE, stringsAsFactors=FALSE, quote = "")
+
+# We create a dictionary of sampleID from raw to supplementary files
+sID_dict <- setNames(meta$sampleID, meta$sampleID_suppl)
+print(sID_dict)
+```
+And the metadata for individual cells
+
+```{r}
+meta2 <- read.table("data/PREMIERE_TIS_JUNE2019_CELLBARCODES_CLUSTER.txt", sep="\t", header=TRUE,
+		    stringsAsFactors = FALSE)
+# We recover the original SampleID
+for(sID_suppl in names(sID_dict)) {
+	sID_actual <- sID_dict[sID_suppl]
+	meta2$cell <- gsub(paste0("^",sID_suppl,"_"),
+			    paste0(sID_actual,"_"),
+			    meta2$cell)
+}
+cellOrigin <- sapply(meta2$cell, function(x) strsplit(x, split="_")[[1]][1])
+
+# Fix one problematic sample ID
+cellOrigin <- gsub("^KPMP", "KPMP_Pilot_18342", cellOrigin)
+
+cellcluster_bySample <- split(setNames(meta2$cluster.name.abbreviation, meta2$cell),
+				       cellOrigin)
+```
+
+
+```{r, fig.width=14, fig.height=6}
+dirs <- list.dirs("./raw/scRNAseq/")
+# We remove the first element that is the folder itself
+dirs <- dirs[-1]
+# Each folder is an individual sample
+names(dirs) <- basename(dirs)
+
+SS <- setNames(vector("list", length=length(dirs)), names(dirs))
+for(GSM in names(SS)) {
+	cat(paste0("Processing ",GSM, "\n"), file=stdout())
+	idx <- which(meta$geo_accession==GSM)
+	sname <- meta[idx, "sampleID"]
+	sname2 <- meta[idx, "sampleID_suppl"]
+	biopsy <- meta[idx, "biopsy"]
+	mtcutoff <- meta[idx, "processing.mtcutoff"]
+	nFeature.min <- meta[idx, "processing.nFeature.min"]
+	nFeature.max <- meta[idx, "processing.nFeature.max"]
+	chemistry10X <- meta[idx, "chemistry10X"]
+
+# 	tag <- meta[idx, "tag"]
+
+
+	fl <- dirs[GSM] 
+	names(fl) <- sname
+
+	dat <- Read10X(data.dir=fl)
+	S <- CreateSeuratObject(counts = dat, project = sname, 
+				min.cells=3, min.features=200)
+	S[["percent.mt"]] <- PercentageFeatureSet(S, pattern = "^MT-")
+
+	## QC metrics
+	# Visualize QC metrics as a violin plot
+	VlnPlot(S, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+	# Feature scatter
+	plot1 <- FeatureScatter(S, feature1 = "nCount_RNA", feature2 = "percent.mt") + 
+		geom_hline(yintercept=c(0, mtcutoff))
+	plot2 <- FeatureScatter(S, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
+		geom_hline(yintercept=c(nFeature.min, nFeature.max))
+	print(plot1 + plot2)
+
+	# Filter
+	S <- subset(S, subset= nFeature_RNA > nFeature.min & nFeature_RNA < nFeature.max &
+		    percent.mt < mtcutoff)
+
+	# run sctransform
+# 	Note that this single command replaces NormalizeData, ScaleData, and FindVariableFeatures.
+# 	Transformed data will be available in the SCT assay, which is set as the default after running sctransform
+# 	During normalization, we can also remove confounding sources of variation, for example, mitochondrial mapping percentage
+	S <- SCTransform(S, vars.to.regress = "percent.mt", verbose = FALSE)
+
+	# Add some metadata
+	S$chemistry10X <- chemistry10X
+	S$biopsy <- biopsy
+
+	# Add cluster from original publication
+	cidx <- gsub("-1$","",colnames(S))
+	cl <- setNames(cellcluster_bySample[[sname]][cidx], 
+		       colnames(S))
+	S$Abb <- cl
+	# GEOACC
+	S$GSMACC <- GSM
+
+	# Save the data
+	saveRDS(S, file=paste0(DATADIR,"/",GSM,".rds"))
+
+}
+```
+
+## Session Info
+```{r}
+sessionInfo()
+```
+
