@@ -22,15 +22,18 @@ transcriptome regulation in CKD will be done.
 | raw    | Raw seq data. It is kept in the local for preprocessing - never pushed.                        |
 | data   | Processed data for data analysis, i.e. count matrices, objects, gene sets collections, etc.    |
 | ext    | External (published) datasets that has been re-analysed incl DOI or source.                    |
-| env    | Docker container / conda environments and install instructions                                 |
-| fig    | Main figures for the repository/project, i.e. graphical abstract, workflow, etc.               |
+| envs   | Docker container / conda environments and install instructions                                 |
+| img    | Main images for the repository/project, i.e. graphical abstract, workflow, etc.                |
 | src    | Useful auxiliary functions to be loaded in different scripts                                   |
 | doc    | Material and methods section, essential documentation, access the cluster, conda environments. |
 | index  | YAML files for individual samples describing parameters of analysis                            |
 
 ```bash
-# Setup repo structure from root
-arr=(raw data ext env fig src doc);
+# Clone repository
+git clone https://github.com/saezlab/CKD.git
+
+# Setup repo structure from root if any folder does not exist already
+arr=(raw data ext envs img src doc index);
 for i in "${arr[@]}"; do if[ ! -e $i ];mkdir $i;fi;done
 ```
 
@@ -41,4 +44,5 @@ Please visit [`env`](./env) for further details.
 2. Data analysis: `R-base 4.0` and `python 3.7` are used as base environments with different packages 
 wrapped in conda environments. The processed data is analysed in BinAC bw-cluster (Tuebingen University).
 
- 
+- - -
+<img src="./img/unihd_logo.png" height="100" align="left">
