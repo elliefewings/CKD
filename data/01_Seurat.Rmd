@@ -1,7 +1,9 @@
 ---
 title: "Create Seurat Object"
 author: "Javier Perales-Patón - javier.perales@bioquant.uni-heidelberg.de - ORCID:0000-0003-0780-6683"
-output: github_document
+output: 
+  github_document:
+    html_preview: false
 params:
   ID: 
     value: x
@@ -42,6 +44,8 @@ library("dplyr")
 library("Seurat")
 library("ggplot2")
 library("yaml")
+library("DoubletFinder")
+source("../src/seurat_fx.R")
 ```
 
 ## Load data
@@ -99,7 +103,7 @@ print(c(before_nCells, after_nCells))
 ```
 
 ## Normalization using scTransform
-```{r}
+```{r warning=FALSE}
 #NOTE: this single command replaces NormalizeData, ScaleData, and FindVariableFeatures.
 # Transformed data will be available in the SCT assay, which is set as the default after running sctransform
 # During normalization, we can also remove confounding sources of variation, for example, 
@@ -112,6 +116,54 @@ S <- SCTransform(S, vars.to.regress = "percent.mt", verbose = FALSE)
 for(feat in names(idx$metadata)) {
 	    S[[feat]] <- idx$metadata[[feat]]
 }
+```
+
+## Finding Variable genes
+```{r HGV}
+S <- FindVariableFeatures(S, selection.method = "vst", nfeatures = 2000)
+```
+
+```{r PCA}
+S <- RunPCA(S, npcs=50, features=VariableFeatures(S))
+calcNPCs <- get_npcs(S)
+(nPCs <- calcNPCs$npcs)
+ElbowPlot(S) + geom_vline(xintercept = nPCs)
+```
+
+```{r UMAP}
+S <- RunUMAP(S, dims= 1:nPCs)
+```
+
+## Doublet detection (using DoubletFinder)
+
+```{r pK_id, message=FALSE, warning=FALSE}
+# No ground-truth: pK identification
+sweep.res.list <- paramSweep_v3(S, PCs = 1:nPCs, sct = TRUE)
+sweep.stats <- summarizeSweep(sweep.res.list, GT = FALSE)
+bcmvn <- find.pK(sweep.stats)
+# Do I have to select here pK based on something??
+# > Optimal pK for any scRNA-seq data can be manually discerned as maxima in BCmvn distributions
+# NOTE: pK is encoded as a factor. But actually is a number. If you transform
+# a factor level to a number directly you will get level position. So as.char is needed.
+pK_sel <- as.numeric(as.character(bcmvn[which.max(bcmvn$BCmetric), "pK"]))
+```
+
+```{r doublet_prop_est}
+## Assuming 0.75% doublet formation rate per each 1000 cells in 10x run.
+## src: https://assets.ctfassets.net/an68im79xiti/1eX2FPdpeCgnCJtw4fj9Hx/7cb84edaa9eca04b607f9193162994de/CG000204_ChromiumNextGEMSingleCell3_v3.1_Rev_D.pdf
+nExp_poi <- (before_nCells/1e3 * 0.0075)  
+S <- doubletFinder_v3(S, PCs = 1:nPCs, pN = 0.25, 
+			       pK = pK_sel, 
+			       nExp = nExp_poi, reuse.pANN = FALSE, 
+			       sct = TRUE)
+# Rename cols
+DF_idx <- grep("^(pANN_|DF\\.)", colnames(S@meta.data))
+colnames(S@meta.data)[DF_idx] <- gsub("^(pANN|DF)(_|\\.)?.*","\\1",colnames(S@meta.data)[DF_idx])
+```
+
+How many doublets were found?
+```{r doublets, message=FALSE, warning=FALSE}
+table(S@meta.data$DF) # DF stands for DoubletFinder
 ```
 
 ## Save object
