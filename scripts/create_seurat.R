@@ -18,13 +18,16 @@
 # Create Seurat Object following standard workflow with SCTransform normalization
 # ===============================================================================
 #
-#  It creates a Seurat Object and an image with a bundle of objects to follow-up QC.
-#  The input are indexes that point-out to the output of cellranger. It is assumed that
-#  cellranger is processed in an in-house external facility, so genomics data is not needed
+#  It creates a Seurat Object and few txt files. These could follow downstream analysis of
+#  QC test and cell clustering/identity annotation.
+#  The input is the YAML file and the cellranger's matrices output of UMI counts and barcodes.
+#  It is assumed that cellranger is run in another in-house facility, so genomics data
+#  (seq data) is not needed to be copied/shared externally here.
 #  to be copied/shared externally.
 #  The output data is exported as follow:
 #      - Seurat Object: a RDS file in the OUTDIR.
-#      - QC_data : a RData file in the OUTDIR.
+#	- nPCs : plain-text file with Number of Principal Components selected.
+#	- nCells: plain-text file with Number of cells before and after filtering.
 
 #--- Env
 set.seed(1234)
@@ -38,15 +41,27 @@ source("./src/seurat_fx.R")
 
 #--- Get input parameters
 option_list = list(
-	make_option(c("--INDIR"), action="store", 
-	  default="./data/00_scRNAseq/", type='character',
-	  help="Input directory that stores CellRanger's output for each library in an individual directory named with sampleID."),
-	make_option(c("--OUTDIR"), action="store", 
-	  default="./data/01_Seurat/", type='character',
-	  help="Output directory that stores the resulting RDS/RData file for Seurat Object/QC image."),
-	make_option(c("--ID"), action="store", 
-	  default="GSM4191941", type='character',
-	  help="sampleID unique of a library pointing-out to INDIR and'./index/samples/$ID.yaml' file.")
+	make_option(c("--MATRIX"), action="store", 
+	  default="./data/00_scRNAseq/GSM4191941/matrix.mtx.gz", type='character',
+	  help="Input: CellRanger's output matrix with UMI counts per cell."),
+	make_option(c("--FEATURES"), action="store", 
+	  default="./data/00_scRNAseq/GSM4191941/features.tsv.gz", type='character',
+	  help="Input: CellRanger's output genes table."),
+	make_option(c("--BARCODES"), action="store", 
+	  default="./data/00_scRNAseq/GSM4191941/barcodes.tsv.gz", type='character',
+	  help="Input: CellRanger's output cell barcodes."),
+	make_option(c("--SEURATOBJ"), action="store", 
+	  default="./data/01_Seurat/GSM4191941/S.rds", type='character',
+	  help="Output file to store the Seurat Object as RDS."),
+	make_option(c("--NPCS"), action="store", 
+	  default="./data/01_Seurat/GSM4191941/nPCs.txt", type='character',
+	  help="Output plain-text file with selected N principal components."),
+	make_option(c("--NCELLS"), action="store", 
+	  default="./data/01_Seurat/GSM4191941/nCells.txt", type='character',
+	  help="Output plain-text file with recorded N cells before and after filtering."),
+	make_option(c("--YAML"), action="store", 
+	  default="./index/samples/GSM4191941.yaml", type='character',
+	  help="YAML file with settings for the sample.")
 )
 
 # Parse the parameters
@@ -60,17 +75,29 @@ for(user_input in names(opt)) {
     assign(user_input,opt[[user_input]])
 }
 
-# Build path to YAML
-YAML <- paste0("./index/samples/",ID,".yaml")
-# TAG for the sample subdirectory of OUTDIR
-INPUT_TAG <- "_Seurat"
+# Prepare INPUT directory for Seurat
+# That is, the directory containing the three cellranger output files
+in1 <- dirname(MATRIX)
+in2 <- dirname(FEATURES)
+in3 <- dirname(BARCODES)
+stopifnot(in1==in2 && in1 == in3)
+INDIR <- in1
+rm(in1, in2, in3)
+
+# Prepare OUTPUT directory
+out1 <- dirname(SEURATOBJ)
+out2 <- dirname(NCELLS)
+out3 <- dirname(NPCS)
+stopifnot(out1==out2 && out1 == out3)
+OUTDIR <- out1
+rm(out1, out2, out3)
 
 # Sanity check
 if(!dir.exists(INDIR)) {
 	stop("[ERROR] Input directory does _NOT_ exist.\n")
 }
 if(!dir.exists(OUTDIR)) {
-	cat("[INFO] Creating output directory.\n")
+	cat("[INFO] Creating output directory.\n", file=stdout())
 	dir.create(OUTDIR)
 }
 if(!file.exists(YAML)) {
@@ -78,20 +105,21 @@ if(!file.exists(YAML)) {
 }
 
 #--- Read index
-yaml_fl <- YAML
-# Find index file
-idx <- yaml::read_yaml(yaml_fl)
+# Read index file
+idx <- yaml::read_yaml(YAML)
 # Reformat for easy access to info
 idx$seurat_cutoff <- unlist(lapply(idx$seurat_cutoff, function(z) setNames(z[[1]], names(z))))
 idx$metadata <- unlist(lapply(idx$metadata, function(z) setNames(z[[1]], names(z))))
 
 #--- Creating Seurat
+# Getting ID of sample
+# It is a standard practice to name the prefix of YAML as the sample ID.
+ID <- strsplit(basename(YAML), split="\\.")[[1]][0]
 cat(paste0("Processing ",ID, "\n"), file=stdout())
 # Find folder of 10x cellranger count
-input_dir <- paste0(INDIR, ID)
-names(input_dir) <- ID
+names(INDIR) <- ID
 
-dat <- Read10X(data.dir=input_dir)
+dat <- Read10X(data.dir=INDIR)
 S <- CreateSeuratObject(counts = dat, project = ID, 
 			min.cells=5, 
 			min.features=idx$seurat_cutoff["MIN_nFeatures"])
@@ -143,6 +171,7 @@ pK_sel <- as.numeric(as.character(bcmvn[which.max(bcmvn$BCmetric), "pK"]))
 # Doublet proportion estimation
 ## Assuming 0.75% doublet formation rate per each 1000 cells in 10x run.
 ## src: https://assets.ctfassets.net/an68im79xiti/1eX2FPdpeCgnCJtw4fj9Hx/7cb84edaa9eca04b607f9193162994de/CG000204_ChromiumNextGEMSingleCell3_v3.1_Rev_D.pdf
+## NOTE: Just search by 'multiplet' in the PDF above.
 nExp_poi <- (before_nCells/1e3 * 0.0075)  
 S <- doubletFinder_v3(S, PCs = 1:nPCs, pN = 0.25, 
 			       pK = pK_sel, 
@@ -152,16 +181,12 @@ S <- doubletFinder_v3(S, PCs = 1:nPCs, pN = 0.25,
 DF_idx <- grep("^(pANN_|DF\\.)", colnames(S@meta.data))
 colnames(S@meta.data)[DF_idx] <- gsub("^(pANN|DF)(_|\\.)?.*","\\1",colnames(S@meta.data)[DF_idx])
 
-##### DEVELOPING STAGE
-#NOTE: add plots for QC
-
 #--- Save object
-saveRDS(S, paste0(OUTDIR,"/S.rds"))
-save(list=c("before_nCells", "after_nCells", "nPCs"))
+saveRDS(S, SEURATOBJ)
 cat(c(before_nCells, after_nCells), sep="\n", 
-    file=paste0(OUTDIR,"nCells_filtering.txt"))
+    file=NCELLS)
 cat(nPCs, sep="\n", 
-    file=paste0(OUTDIR,"nPCs.txt"))
+    file=NPCS)
 
 #--- Show sessionInfo
 sessionInfo()
