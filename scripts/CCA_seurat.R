@@ -15,8 +15,8 @@
 # A full copy of the GNU General Public License can be found on
 # http://www.gnu.org/licenses/.
 #
-# Data integration of Seurat Objects with SCTransform normalization
-# =================================================================
+# CCA Data integration of Seurat Objects with SCTransform normalization
+# =====================================================================
 #
 #  It performs data integration of multiple samples from Seurat Objects with
 #  SCTransform normalization. The input is a YAML pointing-out samples to the 
@@ -38,15 +38,20 @@ options(future.globals.maxSize= (1024*3)*1024^2)
 
 #--- Get input parameters
 option_list = list(
-	make_option(c("--INDIR"), action="store", 
-	  default="./data/01_Seurat/", type='character',
-	  help="Input directory that stores Seurat Objects."),
-	make_option(c("--OUTDIR"), action="store", 
-	  default="./data/02_SCTintegration/", type='character',
+	make_option(c("--INPUT"), action="store", 
+	  default="data/01_Seurat/GSM4191952_S.rds,data/01_Seurat/GSM4191953_S.rds,data/01_Seurat/GSM4191954_S.rds", 
+	  type='character',
+	  help="Comma separated string with a list of seurat objects as RDS files."),
+	make_option(c("--SEURATOBJ"), action="store", 
+	  default="data/02_SCTintegration/test_S.RDS",
+	  type='character',
 	  help="Output directory that stores the resulting RDS for Seurat Object."),
-	make_option(c("--ID"), action="store", 
-	  default="LDvsTN", type='character',
-	  help="group/contrasti ID pointing-out to INDIR and './index/*/$ID.yaml' file.")
+	make_option(c("--NPCS"), action="store", 
+	  default="./data/02_CCAintegration/test_nPCs.txt", type='character',
+	  help="Output plain-text file with selected N principal components."),
+	make_option(c("--YAML"), action="store", 
+	  default="index/contrasts/LDvsTN.yaml", type='character',
+	  help="YAML file with additional metadata for the data integration, if any.")
 )
 
 # Parse the parameters
@@ -60,19 +65,13 @@ for(user_input in names(opt)) {
     assign(user_input,opt[[user_input]])
 }
 
-# Build path to YAML
-YAML <- list.files("./index", pattern=paste0(ID,".yaml"), recursive=TRUE, full.names=TRUE)
-
-# TAG for the sample subdirectory of OUTDIR
-INPUT_TAG <- "_Seurat"
+# Seurat objects
+sampleFLs <- strsplit(INPUT, split=",")[[1]]
+names(sampleFLs) <- gsub("_S.rds","", basename(sampleFLs))
 
 # Sanity check
-if(!dir.exists(INDIR)) {
-	stop("[ERROR] Input directory does _NOT_ exist.\n")
-}
-if(!dir.exists(OUTDIR)) {
-	cat("[INFO] Creating output directory.\n")
-	dir.create(OUTDIR)
+for(fl in sampleFLs) {
+	if(!file.exists(fl)) stop(paste0("[ERROR] fl '",fl,"' does not exist\n"))
 }
 if(!file.exists(YAML)) {
 	stop("[ERROR] Input YAML file does _NOT_ exist.\n")
@@ -81,6 +80,7 @@ if(!file.exists(YAML)) {
 #--- Read index
 yaml_fl <- YAML
 stopifnot(file.exists(yaml_fl))
+#NOTE: DEV : somehow link to metadata from contrasts->by group
 # Find index file
 idx <- yaml::read_yaml(yaml_fl)
 if(grepl("contrast", yaml_fl)) {
@@ -92,25 +92,10 @@ if(grepl("contrast", yaml_fl)) {
 		stopifnot(file.exists(yaml_fl))
 		GRx_idx[[gr]] <- yaml::read_yaml(yaml_fl)$samples
 	}
-	# Get for samples
-	sampleFLs <- vector("character", length=length(unlist(GRx_idx)))
-	names(sampleFLs) <- unlist(GRx_idx)
-	for(sampleID in unlist(GRx_idx)) {
-		S_rds <- paste0(INDIR,"/",sampleID,INPUT_TAG,"/S.rds")
-		# 	stopifnot(file.exists(S_rds))
-		sampleFLs[sampleID] <- ifelse(file.exists(S_rds), S_rds, NA)
-	}
 } else if (grepl("group", yaml_fl)) {
  #NOTE: to be dev
 }
 
-# Sanity check in detail for individual samples for the contrast
-if(any(is.na(sampleFLs))) {
-	cat("[ERROR] : Certain samples that belong to any of the groups do not have Seurat objects:\n", file=stderr())
-	cat(paste0("[ERROR] : DO exist:", paste0(na.omit(sampleFLs), collapse=", "), "\n"), file=stderr())
-	cat(paste0("[ERROR] : do NOT exist:", paste0(names(sampleFLs)[is.na(sampleFLs)], collapse=", "), "\n"), file=stderr())
-	stop("Please, generate the samples that do NOT exist and revise indexes for groups and contrasts.\n")
-}
 
 #--- Load samples
 # Create list of seurat objects
@@ -146,9 +131,8 @@ ElbowPlot(S, ndims=50) + geom_vline(xintercept = nPCs)
 S <- RunUMAP(S, reduction = "pca", dims = 1:nPCs)
 
 #--- Save object
-saveRDS(S, paste0(OUTDIR,"/S.rds"))
+saveRDS(S, SEURATOBJ)
 cat(nPCs, sep="\n", 
-    file=paste0(OUTDIR,"nPCs.txt"))
-
+    file=NPCS)
 #--- Show sessionInfo
 sessionInfo()
