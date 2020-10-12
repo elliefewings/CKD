@@ -1,0 +1,5 @@
+cluster-config: "config/pbs-torque/cluster.yaml"
+cluster: "qsub -N {cluster.jobname} -l nodes={cluster.nodes}:ppn={cluster.ppn},pmem={cluster.pmem},walltime={cluster.walltime} -q {cluster.queue} -j {cluster.jobout} -o {cluster.outdir} -V "
+jobs: 1000
+verbose: true
+notemp: true

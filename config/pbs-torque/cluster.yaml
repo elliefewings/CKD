@@ -1,0 +1,24 @@
+__default__:
+  jobname: "{rule}.{wildcards}"
+  nodes: 1
+  ppn: 1
+  pmem: "1gb"
+  walltime: "5:00"
+  queue: "short"
+  jobout: "oe"
+  outdir: "logs/{rule}.{wildcards.id}"
+
+run_seurat:
+  ppn: 1
+  walltime: "20:00"
+  pmem: "16gb"
+
+run_cca:
+  ppn: 4
+  walltime: "48:00"
+  pmem: "20gb"
+
+run_pano:
+  ppn: 4
+  walltime: "30:00"
+  pmem: "20gb"
