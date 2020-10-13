@@ -59,15 +59,30 @@ option_list = list(
 	make_option(c("--MAX_nFeatures"), action="store", 
 	  default=1, type='numeric',
 	  help="Input: Maximum number of Features per cell to remain after filtering-out."),
+	make_option(c("--MIN_res"), action="store", 
+	  default=0.1, type='numeric',
+	  help="Input: Minimum resolution to explore in the cell clustering."),
+	make_option(c("--MAX_res"), action="store", 
+	  default=2.0, type='numeric',
+	  help="Input: Maximum resolution to explore in the cell clustering."),
+	make_option(c("--BY_res"), action="store", 
+	  default=0.1, type='numeric',
+	  help="Input: Increased resolution by each step during exploration of the cell clustering."),
+	make_option(c("--ACTUAL_res"), action="store", 
+	  default=1.0, type='numeric',
+	  help="Input: Chosen resolution to define idents in the cell clustering."),
 	make_option(c("--SEURATOBJ"), action="store", 
-	  default="./data/01_Seurat/GSM4191941/S.rds", type='character',
+	  default="./data/01_Seurat/GSM4191941_S.rds", type='character',
 	  help="Output file to store the Seurat Object as RDS."),
 	make_option(c("--NPCS"), action="store", 
-	  default="./data/01_Seurat/GSM4191941/nPCs.txt", type='character',
+	  default="./data/01_Seurat/GSM4191941_nPCs.txt", type='character',
 	  help="Output plain-text file with selected N principal components."),
 	make_option(c("--NCELLS"), action="store", 
-	  default="./data/01_Seurat/GSM4191941/nCells.txt", type='character',
+	  default="./data/01_Seurat/GSM4191941_nCells.txt", type='character',
 	  help="Output plain-text file with recorded N cells before and after filtering."),
+	make_option(c("--CLUST"), action="store", 
+	  default="./data/01_Seurat/GSM4191941_clust.txt", type='character',
+	  help="Output plain-text file with cell clustering outcome among resolutions."),
 	make_option(c("--YAML"), action="store", 
 	  default="./index/samples/GSM4191941.yaml", type='character',
 	  help="YAML file with settings for the sample.")
@@ -101,6 +116,9 @@ stopifnot(out1==out2 && out1 == out3)
 OUTDIR <- out1
 rm(out1, out2, out3)
 
+# Ranging of resolutions to explore
+EXPLORE_res <- seq(from=MIN_res, to=MAX_res, by=BY_res)
+
 # Sanity check
 if(!dir.exists(INDIR)) {
 	stop("[ERROR] Input directory does _NOT_ exist.\n")
@@ -111,6 +129,12 @@ if(!dir.exists(OUTDIR)) {
 }
 if(!file.exists(YAML)) {
 	stop("[ERROR] Input YAML file does _NOT_ exist.\n")
+}
+if(!ACTUAL_res %in% EXPLORE_res) {
+	cat("[WARN] INPUT ACTUAL_res is not present in the ranging values of resolution exploration.\n", file=stdout())
+	cat("Adding ACTUAL_res to the ranging to explore.\n", file=stdout())
+
+	EXPLORE_res <- c(EXPLORE_res, ACTUAL_res)
 }
 
 #--- Read index
@@ -123,7 +147,7 @@ idx$metadata <- unlist(lapply(idx$metadata, function(z) setNames(z[[1]], names(z
 #--- Creating Seurat
 # Getting ID of sample
 # It is a standard practice to name the prefix of YAML as the sample ID.
-ID <- strsplit(basename(YAML), split="\\.")[[1]][0]
+ID <- strsplit(basename(YAML), split="\\.")[[1]][1]
 cat(paste0("Processing ",ID, "\n"), file=stdout())
 # Find folder of 10x cellranger count
 names(INDIR) <- ID
@@ -190,12 +214,48 @@ S <- doubletFinder_v3(S, PCs = 1:nPCs, pN = 0.25,
 DF_idx <- grep("^(pANN_|DF\\.)", colnames(S@meta.data))
 colnames(S@meta.data)[DF_idx] <- gsub("^(pANN|DF)(_|\\.)?.*","\\1",colnames(S@meta.data)[DF_idx])
 
+#--- Cell Clustering
+# Shared-Nearest Neighbour with Graph partitioning, Louvain algorithm (default)
+cat(paste0("[INFO] Cell clustering of sample '", Project(S),
+	   "' on assay '", DefaultAssay(S), "'\n"), file=stdout())
+S <- FindNeighbors(S, dims = 1:nPCs)
+S <- FindClusters(S, resolution = EXPLORE_res)
+
+# Rename resolutions as ending with 2 digits for a perfect match
+S <- ColRenameSNN(S)
+
+# Actual colname based on input
+ACTUAL_col <- paste0(DefaultAssay(S),
+		     "_snn_res.", 
+		     formatC(ACTUAL_res, digits=1, format="f"))
+
+# Sanity check
+if(!ACTUAL_col %in% colnames(S@meta.data)) {
+	cat("[WARN]: It was not found the outcome of the actual chosen resolution among metadata.\n", file=stdout())
+	cat(paste0("Actual resolution column name: ",ACTUAL_col,".\n"), file=stdout())
+	cat(paste0("Possible columns with no match: ",
+		   paste(colnames(S@meta.data), collapse="\n"),
+		   ".\n"), 
+	    file=stdout())
+	stop("[ERROR] Not possible to match resolutions.\n")
+}
+
+# Set actual chosen resolution
+Idents(S) <- S@meta.data[, ACTUAL_col]
+S@meta.data$seurat_clusters <- S@meta.data[, ACTUAL_col]
+
 #--- Save object
 saveRDS(S, SEURATOBJ)
-cat(c(before_nCells, after_nCells), sep="\n", 
-    file=NCELLS)
-cat(nPCs, sep="\n", 
-    file=NPCS)
+cat(c(before_nCells, after_nCells), sep="\n", file=NCELLS)
+cat(nPCs, sep="\n", file=NPCS)
+write.table(S@meta.data[,c("seurat_clusters", 
+			   grep(paste0("^", DefaultAssay(S), "_snn_res"), 
+				colnames(S@meta.data), value=TRUE)
+			   )
+			],
+            file=CLUST,
+            sep=",", col.names = NA, row.names=TRUE, quote=TRUE)
+
 
 #--- Show sessionInfo
 sessionInfo()

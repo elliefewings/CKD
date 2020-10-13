@@ -38,6 +38,19 @@ def getSeuratParams(wildcards):
 
 	return seurat_cutoff
 
+def getSeuratClust(wildcards):
+	YAML = glob.glob("index/*/"+wildcards.id+".yaml")[0]
+	yaml_fl = open(YAML)
+	parsed_yaml = yaml.load(yaml_fl, Loader=yaml.FullLoader)
+	seurat_clust = parsed_yaml["seurat_clust"]
+
+	if ['MIN_res', 'MAX_res', 'BY_res', 'ACTUAL_res'] == list(seurat_clust.keys()):
+		seurat_clust = list(seurat_clust.values())
+	else:
+		sys.exit("ERROR: clustering format is not correct")
+
+	return seurat_clust
+
 rule seurat:
 	input:
 		expand("data/01_Seurat/{id}_{fl}", id=SIDS, fl=["S.rds", "nPCs.txt", "nCells.txt"])
@@ -50,13 +63,16 @@ rule run_seurat:
 	output:
 		"data/01_Seurat/{id}_S.rds",
 		"data/01_Seurat/{id}_nPCs.txt",
-		"data/01_Seurat/{id}_nCells.txt"
+		"data/01_Seurat/{id}_nCells.txt",
+		"data/01_Seurat/{id}_clust.csv"
 	
 	params:
 		# Activate existing conda env
 		conda_env = "envs/01_Seurat",
-		# Get seurat params from sample YAML file
-		seurat_cutoff = getSeuratParams
+		# Get seurat params for cell filtering from sample YAML file
+		seurat_cutoff = getSeuratParams,
+		# Get seurat params for cell clustering from sample YAML file
+		seurat_clust = getSeuratClust
 
 	message:
 		"Building single-sample Seurat for {wildcards.id}"
@@ -66,10 +82,13 @@ rule run_seurat:
 		' && . $(conda info --base)/etc/profile.d/conda.sh '
 		' && conda activate {params.conda_env} '
 		"&& $CONDA_PREFIX/bin/Rscript {input.script}"
+		# Inputs
 		" --MATRIX {input.CR[0]} --FEATURES {input.CR[1]} --BARCODES {input.CR[2]}"
 		" --MAX_percMT {params.seurat_cutoff[0]} --MIN_nFeatures {params.seurat_cutoff[1]} --MAX_nFeatures {params.seurat_cutoff[2]}"
+		" --MIN_res {params.seurat_clust[0]} --MAX_res {params.seurat_clust[1]} --BY_res {params.seurat_clust[2]} --ACTUAL_res {params.seurat_clust[3]}"
 		" --YAML {input.YAML}"
-		" --SEURATOBJ {output[0]} --NPCS {output[1]} --NCELLS {output[2]}"
+		# Outputs
+		" --SEURATOBJ {output[0]} --NPCS {output[1]} --NCELLS {output[2]} --CLUST {output[3]}"
 
 ### Data Integration
 def getIDSfromGROUP(yaml_fl2):
@@ -118,14 +137,18 @@ rule run_cca:
 	params:
 		# Activate existing conda env
 		conda_env = "envs/01_Seurat",
+		# Get seurat params for cell clustering from sample YAML file
+		seurat_clust = getSeuratClust
 	message: "Data integration for contrast {wildcards.id} using CCA SCT seurat"
 	run:
 		seurats = ",".join(input.SL)
 		shell('set +eu '\
 		" && (test -d data/02_CCAintegration/ || mkdir data/02_CCAintegration/)"\
-		' && . $(conda info --base)/etc/profile.d/conda.sh '
-		' && conda activate {params.conda_env} '
-		"&& $CONDA_PREFIX/bin/Rscript {input.script} --INPUT {seurats} --SEURATOBJ {output[0]} --NPCS {output[1]} --YAML {input.YAML}")
+		' && . $(conda info --base)/etc/profile.d/conda.sh '\
+		' && conda activate {params.conda_env} '\
+		"&& $CONDA_PREFIX/bin/Rscript {input.script} --INPUT {seurats} --SEURATOBJ {output[0]} --NPCS {output[1]}" 
+		" --MIN_res {params.seurat_clust[0]} --MAX_res {params.seurat_clust[1]} --BY_res {params.seurat_clust[2]} --ACTUAL_res {params.seurat_clust[3]}"
+		" --YAML {input.YAML}")
 
 rule pano:
 	input:
@@ -149,4 +172,6 @@ rule run_pano:
 		" && (test -d data/02_scanorama/ || mkdir data/02_scanorama/)"\
 		' && . $(conda info --base)/etc/profile.d/conda.sh '
 		' && conda activate {params.conda_env} '
-		"&& $CONDA_PREFIX/bin/Rscript {input.script} --INPUT {seurats} --SEURATOBJ {output[0]} --NPCS {output[1]} --YAML {input.YAML}")
+		"&& $CONDA_PREFIX/bin/Rscript {input.script} --INPUT {seurats} --SEURATOBJ {output[0]} --NPCS {output[1]}" 
+		" --MIN_res {params.seurat_clust[0]} --MAX_res {params.seurat_clust[1]} --BY_res {params.seurat_clust[2]} --ACTUAL_res {params.seurat_clust[3]}"
+		" --YAML {input.YAML}")

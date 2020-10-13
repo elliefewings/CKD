@@ -46,9 +46,24 @@ option_list = list(
 	  default="data/02_SCTintegration/test_S.RDS",
 	  type='character',
 	  help="Output directory that stores the resulting RDS for Seurat Object."),
+	make_option(c("--MIN_res"), action="store", 
+	  default=0.1, type='numeric',
+	  help="Input: Minimum resolution to explore in the cell clustering."),
+	make_option(c("--MAX_res"), action="store", 
+	  default=2.0, type='numeric',
+	  help="Input: Maximum resolution to explore in the cell clustering."),
+	make_option(c("--BY_res"), action="store", 
+	  default=0.1, type='numeric',
+	  help="Input: Increased resolution by each step during exploration of the cell clustering."),
+	make_option(c("--ACTUAL_res"), action="store", 
+	  default=1.0, type='numeric',
+	  help="Input: Chosen resolution to define idents in the cell clustering."),
 	make_option(c("--NPCS"), action="store", 
 	  default="./data/02_CCAintegration/test_nPCs.txt", type='character',
 	  help="Output plain-text file with selected N principal components."),
+	make_option(c("--CLUST"), action="store", 
+	  default="./data/02_CCAintegration/test_clust.txt", type='character',
+	  help="Output plain-text file with cell clustering outcome among resolutions."),
 	make_option(c("--YAML"), action="store", 
 	  default="index/contrasts/LDvsTN.yaml", type='character',
 	  help="YAML file with additional metadata for the data integration, if any.")
@@ -69,6 +84,9 @@ for(user_input in names(opt)) {
 sampleFLs <- strsplit(INPUT, split=",")[[1]]
 names(sampleFLs) <- gsub("_S.rds","", basename(sampleFLs))
 
+# Ranging of resolutions to explore
+EXPLORE_res <- seq(from=MIN_res, to=MAX_res, by=BY_res)
+
 # Sanity check
 for(fl in sampleFLs) {
 	if(!file.exists(fl)) stop(paste0("[ERROR] fl '",fl,"' does not exist\n"))
@@ -76,6 +94,13 @@ for(fl in sampleFLs) {
 if(!file.exists(YAML)) {
 	stop("[ERROR] Input YAML file does _NOT_ exist.\n")
 }
+if(!ACTUAL_res %in% EXPLORE_res) {
+	cat("[WARN] INPUT ACTUAL_res is not present in the ranging values of resolution exploration.\n", file=stdout())
+	cat("Adding ACTUAL_res to the ranging to explore.\n", file=stdout())
+
+	EXPLORE_res <- c(EXPLORE_res, ACTUAL_res)
+}
+
 
 #--- Read index
 yaml_fl <- YAML
@@ -130,9 +155,47 @@ ElbowPlot(S, ndims=50) + geom_vline(xintercept = nPCs)
 
 S <- RunUMAP(S, reduction = "pca", dims = 1:nPCs)
 
+#--- Cell Clustering
+# Shared-Nearest Neighbour with Graph partitioning, Louvain algorithm (default)
+cat(paste0("[INFO] Cell clustering of sample '", Project(S),
+	   "' on assay '", DefaultAssay(S), "'\n"), file=stdout())
+S <- FindNeighbors(S, dims = 1:nPCs)
+S <- FindClusters(S, resolution = EXPLORE_res)
+
+# Rename resolutions as ending with 2 digits for a perfect match
+S <- ColRenameSNN(S)
+
+# Actual colname based on input
+ACTUAL_col <- paste0(DefaultAssay(S),
+		     "_snn_res.", 
+		     formatC(ACTUAL_res, digits=1, format="f"))
+
+# Sanity check
+if(!ACTUAL_col %in% colnames(S@meta.data)) {
+	cat("[WARN]: It was not found the outcome of the actual chosen resolution among metadata.\n", file=stdout())
+	cat(paste0("Actual resolution column name: ",ACTUAL_col,".\n"), file=stdout())
+	cat(paste0("Possible columns with no match: ",
+		   paste(colnames(S@meta.data), collapse="\n"),
+		   ".\n"), 
+	    file=stdout())
+	stop("[ERROR] Not possible to match resolutions.\n")
+}
+
+# Set actual chosen resolution
+Idents(S) <- S@meta.data[, ACTUAL_col]
+S@meta.data$seurat_clusters <- S@meta.data[, ACTUAL_col]
+
 #--- Save object
 saveRDS(S, SEURATOBJ)
 cat(nPCs, sep="\n", 
     file=NPCS)
+write.table(S@meta.data[,c("seurat_clusters", 
+			   grep(paste0("^", DefaultAssay(S), "_snn_res"),
+				colnames(S@meta.data), value=TRUE)
+			   )
+			],
+            file=CLUST,
+            sep=",", col.names = NA, row.names=TRUE, quote=TRUE)
+
 #--- Show sessionInfo
 sessionInfo()

@@ -167,6 +167,36 @@ stopifnot(all(rownames(S@meta.data)==colnames(S)))
 rownames(intdimred) <- colnames(S)
 S[["pca"]] <- CreateDimReducObject(embeddings = intdimred, stdev = stdevs, key = "PC_", assay = "pano")
 
+#--- Cell Clustering
+# Shared-Nearest Neighbour with Graph partitioning, Louvain algorithm (default)
+cat(paste0("[INFO] Cell clustering of sample '", Project(S),
+	   "' on assay '", DefaultAssay(S), "'\n"), file=stdout())
+S <- FindNeighbors(S, dims = 1:nPCs)
+S <- FindClusters(S, resolution = EXPLORE_res)
+
+# Rename resolutions as ending with 2 digits for a perfect match
+S <- ColRenameSNN(S)
+
+# Actual colname based on input
+ACTUAL_col <- paste0(DefaultAssay(S),
+		     "_snn_res.", 
+		     formatC(ACTUAL_res, digits=1, format="f"))
+
+# Sanity check
+if(!ACTUAL_col %in% colnames(S@meta.data)) {
+	cat("[WARN]: It was not found the outcome of the actual chosen resolution among metadata.\n", file=stdout())
+	cat(paste0("Actual resolution column name: ",ACTUAL_col,".\n"), file=stdout())
+	cat(paste0("Possible columns with no match: ",
+		   paste(colnames(S@meta.data), collapse="\n"),
+		   ".\n"), 
+	    file=stdout())
+	stop("[ERROR] Not possible to match resolutions.\n")
+}
+
+# Set actual chosen resolution
+Idents(S) <- S@meta.data[, ACTUAL_col]
+S@meta.data$seurat_clusters <- S@meta.data[, ACTUAL_col]
+
 #--- Save object
 saveRDS(S, SEURATOBJ)
 cat(nPCs, sep="\n", 
