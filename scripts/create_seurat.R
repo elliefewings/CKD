@@ -100,6 +100,9 @@ option_list = list(
 # Parse the parameters
 opt = parse_args(OptionParser(option_list=option_list))
 
+# Create report object
+report <- c()
+
 #Add parameters to report
 report$opt <- opt
 
@@ -177,8 +180,6 @@ S <- CreateSeuratObject(counts = dat, project = ID,
 S[["percent.mt"]] <- PercentageFeatureSet(S, pattern = "^MT-")
 
 #--- Create summary table and figures of meta data pre-filtering
-# Create report object
-report <- c()
 # Subset meta data
 report$data.meta.summ <- summarise(S@meta.data, ncells = length(orig.ident),
                             med_nCount_RNA = median(nCount_RNA),
@@ -249,6 +250,8 @@ nPCs <- calcNPCs$npcs
 
 # Get npc elbow plot for report
 report$npcs <- calcNPCs
+# Get pca plot for report
+report$pca <- DimPlot(S, reduction = "pca")
 
 S <- RunUMAP(S, dims= 1:nPCs)
 

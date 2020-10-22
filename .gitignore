@@ -1,2 +1,6 @@
 *.tiff
 *.html
+data/00_scRNAseq
+data/01_Seurat
+data/01a_Report
+

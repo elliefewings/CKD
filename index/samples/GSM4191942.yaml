@@ -1,0 +1,18 @@
+---
+id                      : GSM4191942
+type                    : scRNAseq
+biotype                 : tumornephrectomy
+metadata                :
+        treatment     : NA
+        age           : 69
+        gender        : M
+seurat_cutoff           :
+        MAX_percMT    : 20
+        MIN_nFeatures : 500
+        MAX_nFeatures : 5000
+seurat_clust:
+        MIN_res:       0.1
+        MAX_res:       2.0
+        BY_res:        0.2
+        ACTUAL_res:    1.0
+...
