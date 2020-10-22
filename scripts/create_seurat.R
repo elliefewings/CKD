@@ -35,8 +35,14 @@ set.seed(1234)
 #--- Libraries
 suppressPackageStartupMessages(require(Seurat))
 suppressPackageStartupMessages(require(optparse))
+
+#E# May want to add remotes::install_github('chris-mcginnis-ucsf/DoubletFinder') somewhere to documentation
 suppressPackageStartupMessages(library(DoubletFinder))
 suppressPackageStartupMessages(require(yaml))
+suppressPackageStartupMessages(require(magrittr))
+suppressPackageStartupMessages(require(dplyr))
+suppressPackageStartupMessages(require(ggplot2))
+suppressPackageStartupMessages(require(clustree))
 source("./src/seurat_fx.R")
 
 #--- Get input parameters
@@ -74,6 +80,9 @@ option_list = list(
 	make_option(c("--SEURATOBJ"), action="store", 
 	  default="./data/01_Seurat/GSM4191941_S.rds", type='character',
 	  help="Output file to store the Seurat Object as RDS."),
+	make_option(c("--REPORTOBJ"), action="store", 
+	  default="./data/01a_Report/GSM4191941_R.rds", type='character',
+	  help="Output file to store the Report Object as RDS."),
 	make_option(c("--NPCS"), action="store", 
 	  default="./data/01_Seurat/GSM4191941_nPCs.txt", type='character',
 	  help="Output plain-text file with selected N principal components."),
@@ -90,6 +99,9 @@ option_list = list(
 
 # Parse the parameters
 opt = parse_args(OptionParser(option_list=option_list))
+
+#Add parameters to report
+report$opt <- opt
 
 # Cat the input parameters
 cat("[INFO] Input parameters\n", file=stdout())
@@ -110,10 +122,12 @@ rm(in1, in2, in3)
 
 # Prepare OUTPUT directory
 out1 <- dirname(SEURATOBJ)
+out1a <- dirname(REPORTOBJ)
 out2 <- dirname(NCELLS)
 out3 <- dirname(NPCS)
 stopifnot(out1==out2 && out1 == out3)
 OUTDIR <- out1
+REPORTDIR <- out1a
 rm(out1, out2, out3)
 
 # Ranging of resolutions to explore
@@ -126,6 +140,10 @@ if(!dir.exists(INDIR)) {
 if(!dir.exists(OUTDIR)) {
 	cat("[INFO] Creating output directory.\n", file=stdout())
 	dir.create(OUTDIR)
+}
+if(!dir.exists(REPORTDIR)) {
+  cat("[INFO] Creating report directory.\n", file=stdout())
+  dir.create(REPORTDIR)
 }
 if(!file.exists(YAML)) {
 	stop("[ERROR] Input YAML file does _NOT_ exist.\n")
@@ -158,6 +176,35 @@ S <- CreateSeuratObject(counts = dat, project = ID,
 			min.features=idx$seurat_cutoff["MIN_nFeatures"])
 S[["percent.mt"]] <- PercentageFeatureSet(S, pattern = "^MT-")
 
+#--- Create summary table and figures of meta data pre-filtering
+# Create report object
+report <- c()
+# Subset meta data
+report$data.meta.summ <- summarise(S@meta.data, ncells = length(orig.ident),
+                            med_nCount_RNA = median(nCount_RNA),
+                            min_nCount_RNA = min(nCount_RNA),
+                            max_nCount_RNA = max(nCount_RNA),
+                            med_nFeature_RNA = median(nFeature_RNA),
+                            min_nFeature_RNA = min(nFeature_RNA),
+                            max_nFeature_RNA = max(nFeature_RNA),
+                            med_percent.mt = median(percent.mt),
+                            min_percent.mt = min(percent.mt),
+                            max_percent.mt = max(percent.mt)) %>% t() %>% as.data.frame()
+
+colnames(report$data.meta.summ) <- "pre-filtering"
+
+# Create QC plots
+report$qc1 <- VlnPlot(S, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, cols="grey")
+
+report$qc1.1 <- report$qc1[[1]] + theme(axis.title.x=element_blank(), axis.text.x=element_blank()) + geom_hline(yintercept=MAX_nFeatures, color="red") + geom_hline(yintercept=MIN_nFeatures, color="blue")
+report$qc1.2 <- report$qc1[[2]] + theme(axis.title.x=element_blank(), axis.text.x=element_blank())
+report$qc1.3 <- report$qc1[[3]] + theme(axis.title.x=element_blank(), axis.text.x=element_blank()) + geom_hline(yintercept=MAX_percMT, color="red")
+
+report$qc2 <- FeatureScatter(S, feature1 = "nCount_RNA", feature2 = "percent.mt", cols="steelblue4")
+
+report$qc3 <- FeatureScatter(S, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", cols="steelblue4")
+
+
 #--- Filter-out
 # Before
 before_nCells <- ncol(S)
@@ -167,6 +214,18 @@ S <- subset(S, subset= nFeature_RNA > idx$seurat_cutoff["MIN_nFeatures"] &
 	    percent.mt < idx$seurat_cutoff["MAX_percMT"])
 # After
 after_nCells <- ncol(S)
+
+#--- Create summary table of meta data post-filtering
+report$data.meta.summ$'post-filtering' <- summarise(S@meta.data, ncells = length(orig.ident),
+                                             med_nCount_RNA = median(nCount_RNA),
+                                             min_nCount_RNA = min(nCount_RNA),
+                                             max_nCount_RNA = max(nCount_RNA),
+                                             med_nFeature_RNA = median(nFeature_RNA),
+                                             min_nFeature_RNA = min(nFeature_RNA),
+                                             max_nFeature_RNA = max(nFeature_RNA),
+                                             med_percent.mt = median(percent.mt),
+                                             min_percent.mt = min(percent.mt),
+                                             max_percent.mt = max(percent.mt)) %>% t()
 
 #--- Normalization using scTransform
 #NOTE: this single command replaces NormalizeData, ScaleData, and FindVariableFeatures.
@@ -187,6 +246,9 @@ S <- FindVariableFeatures(S, selection.method = "vst", nfeatures = 2000)
 S <- RunPCA(S, npcs=50, features=VariableFeatures(S))
 calcNPCs <- get_npcs(S)
 nPCs <- calcNPCs$npcs
+
+# Get npc elbow plot for report
+report$npcs <- calcNPCs
 
 S <- RunUMAP(S, dims= 1:nPCs)
 
@@ -220,6 +282,11 @@ cat(paste0("[INFO] Cell clustering of sample '", Project(S),
 	   "' on assay '", DefaultAssay(S), "'\n"), file=stdout())
 S <- FindNeighbors(S, dims = 1:nPCs)
 S <- FindClusters(S, resolution = EXPLORE_res)
+
+report$clust <- suppressWarnings(clustree(S)) + theme(
+  legend.title = element_text(size = 16),
+  legend.text = element_text(size = 12)) +
+  guides(colour = guide_legend(override.aes = list(size=5)))
 
 # Rename resolutions as ending with 2 digits for a perfect match
 S <- ColRenameSNN(S)
@@ -256,6 +323,8 @@ write.table(S@meta.data[,c("seurat_clusters",
             file=CLUST,
             sep=",", col.names = NA, row.names=TRUE, quote=TRUE)
 
+#--- Save object for report
+saveRDS(report, REPORTOBJ)
 
 #--- Show sessionInfo
 sessionInfo()
