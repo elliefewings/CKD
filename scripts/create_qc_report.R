@@ -42,7 +42,7 @@
 #############
 
 ## Load libraries
-libs <- c("webshot", "shiny", "gridExtra", "stringr", "optparse", "ggplot2")
+libs <- c("webshot", "shiny", "gridExtra", "stringr", "optparse", "ggplot2", "ggraph")
 
 for (i in libs) {
   if (! suppressPackageStartupMessages(suppressWarnings(require(i, character.only = TRUE, quietly = TRUE)))) { 
