@@ -66,9 +66,9 @@ server <- shinyServer(function(input, output, session) {
   #Set text outputs
   output$title <- renderText({paste("QC and Data Processing Report:", sample)})
 
-  inshort <- ifelse(nchar(dirname(opt$MATRIX)) > 50, 
-                    substr(dirname(opt$MATRIX), nchar(dirname(opt$MATRIX))-50, nchar(dirname(opt$MATRIX))),
-                    dirname(opt$MATRIX)) %>% sub(".*?/", "/", .)
+  inshort <- ifelse(nchar(dirname(opt2$input)) > 50, 
+                    substr(dirname(opt2$input), nchar(dirname(opt2$input))-50, nchar(dirname(opt2$input))),
+                    dirname(opt2$input)) %>% sub(".*?/", "/", .)
   
   output$input <- renderText({HTML(paste("<b>","Input Directory:", "</b>", "...", inshort))})
   
@@ -77,16 +77,6 @@ server <- shinyServer(function(input, output, session) {
                      opt2$output) %>% sub(".*?/", "/", .)
   
   output$output <- renderText({HTML(paste("<b>", "Output Directory:", "</b>", "...", outshort))})
-  yamshort <- ifelse(nchar(opt$YAML) > 50, 
-                     substr(opt$YAML, nchar(opt$YAML)-50, nchar(opt$YAML)),
-                     opt$YAML) %>% sub(".*?/", "/", .)
-  
-  output$yaml <- renderText({HTML(paste("<b>", "YAML:", "</b>", "...", yamshort))})
-  
-  output$minfeatures <- renderText({HTML(paste("<b>", "Minimum Features Filter:", "</b>", opt$MIN_nFeatures))})
-  output$maxfeatures <- renderText({HTML(paste("<b>", "Maximum Features Filter:", "</b>", opt$MAX_nFeatures))})
-  output$maxpercentmt <- renderText({HTML(paste("<b>", "Maximum Percentage MT Filter:", "</b>", opt$MAX_percMT))})
-  output$res <- renderText({HTML(paste("<b>", "Resolution to explore in cell clustering:", "</b>", opt$MIN_res, "-", opt$MAX_res))})
   
   #Set QC plots 
   output$initQC <- renderPlot({
@@ -108,7 +98,7 @@ server <- shinyServer(function(input, output, session) {
     "<b>Minimum percent.mt</b>",
     "<b>Maximum percent.mt</b>"
   )
-  colnames(data.meta.summ)[1:2] <- c("Pre-filtering", "Post-filtering")
+  colnames(data.meta.summ)[1] <- "Post-filtering"
   output$sum <- renderTable(data.meta.summ, spacing = "l", rownames=TRUE, digits=0, hover=TRUE, sanitize.text.function=function(x){x})
   
   #Set npcs plot
@@ -119,12 +109,5 @@ server <- shinyServer(function(input, output, session) {
   
   # Plot clustree data
   output$clust <- renderPlot(clust)
-  #Plot hashtag data
-  if (!is.null(opt$hashtag)) {
-    output$doubtitle <- renderText("Number of Doublets Identified")
-    output$hashtitle <- renderText("Expression Counts Over Hashtags")
-    output$doublets <- renderPlot(doublet)
-    output$hashtags <- renderPlot(ridge)
-  } 
   
 })
