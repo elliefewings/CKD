@@ -71,7 +71,7 @@ option_list <- list(
 opt2 <- parse_args(OptionParser(option_list=option_list))
 
 #Test input
-opt2$input <- "C:/Users/ellie/OneDrive/Saez/Pipeline/github/CKD/data/testmatrix.mtx"
+#opt2$input <- "C:/Users/ellie/OneDrive/Saez/Pipeline/github/CKD/data/testmatrix.mtx"
 
 ## Check for input and output options
 if (is.null(opt2$input)) {
